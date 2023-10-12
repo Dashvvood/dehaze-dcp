@@ -1,8 +1,23 @@
 import numpy as np
+import scipy as sc
 from typing import List, Optional, Union
-import scipy.ndimage
-import scipy.sparse
-from scipy.sparse.linalg import spsolve
+import time
+
+def _rgb2gray(A):
+    r, g, b = A[..., 0], A[..., 1], A[..., 2]
+    return 0.2989 * r + 0.5870 * g + 0.1140 * b
+
+def _expand_dims_as(A, B, left=False):
+    """
+    make len(A.shape) = len(B.shape)
+    """
+    while len(A.shape) < len(B.shape):
+        if left:
+            A = A[np.newaxis, ...]
+        else:
+            A = A[..., np.newaxis]
+    return A
+
 
 def get_dark_channel(img: np.ndarray, patch_size: tuple[int, int]=(15,15)) -> np.ndarray:
     if len(img.shape) == 3 and img.shape[-1] == 3:
@@ -23,7 +38,7 @@ def get_dark_channel(img: np.ndarray, patch_size: tuple[int, int]=(15,15)) -> np
     # for i, j in np.ndindex(img_min.shape):
     #     dc[i, j, ...] = np.min(img_padding[i:i+patch_size, j:j+patch_size, ...])
     
-    return scipy.ndimage.minimum_filter(img_min, patch_size, mode='nearest')
+    return sc.ndimage.minimum_filter(img_min, patch_size, mode='nearest')
 
 
 def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
@@ -49,8 +64,9 @@ def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
 
 
 def get_tilde_t(im, A, omega=0.95, **kwarg):
-    while len(A.shape) < len(im.shape):
-        A = A[np.newaxis, :]
+    # while len(A.shape) < len(im.shape):
+    #     A = A[np.newaxis, :]
+    A = _expand_dims_as(A, im, left=True)
     return 1 - omega * get_dark_channel(im / A, **kwarg)
 
 
@@ -64,7 +80,7 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
 
     ## the verse of "mask"
     if consts is not None:
-        consts = scipy.ndimage.binary_erosion(consts, structure=np.ones((win_size * 2 + 1, win_size * 2 + 1)))
+        consts = sc.ndimage.binary_erosion(consts, structure=np.ones((win_size * 2 + 1, win_size * 2 + 1)))
         tlen = np.sum(1 - consts[win_size:h-win_size, win_size:w-win_size]) * (neb_size ** 2)
     else:
         tlen = (h-2*win_size) * (w-2*win_size) * neb_size ** 2
@@ -98,22 +114,25 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
     row_inds = row_inds[:LEN]
     col_inds = col_inds[:LEN]
 
-    A = scipy.sparse.coo_matrix((vals, (row_inds, col_inds)), shape=(img_size, img_size))
+    A = sc.sparse.coo_matrix((vals, (row_inds, col_inds)), shape=(img_size, img_size))
     
     sumA = np.array(np.sum(A, axis=1)).squeeze()
 
-    return scipy.sparse.diags(sumA, 0, (img_size, img_size)) - A
+    return sc.sparse.diags(sumA, 0, (img_size, img_size)) - A
 
 
-def guided_filter(I, p, ks:tuple[int, int]=(3,3), eps=1e-7):
+def guided_filter(I, p, ks:tuple[int, int]=(5,5), eps=1e-2):
     # TODO: rgb or gray
     filter_mean = np.ones(ks)
     filter_mean /= np.sum(filter_mean)
     
-    mean_I = np.convolve(I, filter_mean, mode="same")
-    mean_p = np.convolve(p, filter_mean, mode="same")
-    corr_Ip = np.convolve(I * p , filter_mean, mode="same")
-    corr_I = np.convolve(I * I , filter_mean, mode="same")
+    p = _expand_dims_as(p, I)
+    filter_mean = _expand_dims_as(filter_mean, I)
+
+    mean_I = sc.ndimage.convolve(I, filter_mean, mode="nearest")
+    mean_p = sc.ndimage.convolve(p, filter_mean, mode="nearest")
+    corr_Ip = sc.ndimage.convolve(I * p , filter_mean, mode="nearest")
+    corr_I = sc.ndimage.convolve(I * I , filter_mean, mode="nearest")
 
     var_I = corr_I - mean_I * mean_I
     cov_Ip = corr_Ip - mean_I * mean_p
@@ -121,24 +140,36 @@ def guided_filter(I, p, ks:tuple[int, int]=(3,3), eps=1e-7):
     a = cov_Ip / (var_I + eps)
     b = mean_p - a * mean_I
 
-    mean_a = np.convolve(a, filter_mean, mode="same")
-    mean_b = np.convolve(b, filter_mean, mode="same")
+    mean_a = sc.ndimage.convolve(a, filter_mean, mode="nearest")
+    mean_b = sc.ndimage.convolve(b, filter_mean, mode="nearest")
 
-    return mean_a * I + mean_b
+    res = mean_a * I + mean_b
+    if len(res.shape) == 3 and res.shape[-1] == 3:
+        res = _rgb2gray(res)
+    return res
 
+def soft_matting(
+    I:np.ndarray, p, lam=1e-4, **kwargs
+):
+    L = get_laplace_matting_matrix(I=I, **kwargs)
+    # t = sc.sparse.linalg.spsolve(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * p.flatten())
+    t, info = sc.sparse.linalg.cg(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * p.flatten())
+    return t.reshape(p.shape)
 
 def get_t(L, tilde_t, lam=1e-4, ):
-    t = spsolve(L + lam * scipy.sparse.diags([1] * L.shape[0], 0), lam * tilde_t.flatten())
+    t = sc.sparse.linalg.spsolve(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * tilde_t.flatten())
     return t.reshape(tilde_t.shape)
 
-def get_J(I, A, t, t0=0.1):
-    while len(A.shape) < len(I.shape):
-        A = A[np.newaxis, ...]
+def get_J(I, A, t, t0=0.1, clip=True):
+    A = _expand_dims_as(A, I, left=True)
     t = np.clip(t, a_min=t0, a_max=1)
-    while len(t.shape) < len(I.shape):
-        t = t[..., np.newaxis]
-    return (I - A) / t + A
+    t = _expand_dims_as(t, I)
+    res = (I - A) / t + A
+    if clip:
+        res = np.clip(res, a_min=0, a_max=1)
+    return res
+
+def get_depth(t, beta=0.388):
+    return  - np.log(t) / beta
 
 
-def dehaze():
-    pass
