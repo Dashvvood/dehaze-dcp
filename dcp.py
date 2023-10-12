@@ -45,16 +45,13 @@ def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
         raise NotImplementedError
     
     res = mask * im
-    res = np.sum(res, axis=(0,1)) / numpix
-
-    return res
+    return np.sum(res, axis=(0,1)) / numpix
 
 
 def get_tilde_t(im, A, omega=0.95, **kwarg):
     while len(A.shape) < len(im.shape):
         A = A[np.newaxis, :]
     return 1 - omega * get_dark_channel(im / A, **kwarg)
-
 
 
 def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, win_size:int=1):
@@ -109,6 +106,7 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
 
 
 def guided_filter(I, p, ks:tuple[int, int]=(3,3), eps=1e-7):
+    # TODO: rgb or gray
     filter_mean = np.ones(ks)
     filter_mean /= np.sum(filter_mean)
     
