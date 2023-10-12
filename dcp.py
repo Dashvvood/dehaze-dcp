@@ -18,7 +18,6 @@ def _expand_dims_as(A, B, left=False):
             A = A[..., np.newaxis]
     return A
 
-
 def get_dark_channel(img: np.ndarray, patch_size: tuple[int, int]=(15,15)) -> np.ndarray:
     if len(img.shape) == 3 and img.shape[-1] == 3:
         img_min = np.min(img, axis=-1)
@@ -39,6 +38,19 @@ def get_dark_channel(img: np.ndarray, patch_size: tuple[int, int]=(15,15)) -> np
     #     dc[i, j, ...] = np.min(img_padding[i:i+patch_size, j:j+patch_size, ...])
     
     return sc.ndimage.minimum_filter(img_min, patch_size, mode='nearest')
+
+def get_mask(dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
+    """
+    average of the top-intensity pixels
+    """
+    numpix = max(int(dc.shape[0] * dc.shape[1] * top_ratio), 1)
+    
+    dc_flatten = dc.flatten()
+    indices = np.argsort(dc_flatten)[-numpix:]
+    mask = np.full_like(dc_flatten, False)
+    mask[indices] = True
+
+    return mask
 
 
 def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
@@ -62,13 +74,11 @@ def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
     res = mask * im
     return np.sum(res, axis=(0,1)) / numpix
 
-
 def get_tilde_t(im, A, omega=0.95, **kwarg):
     # while len(A.shape) < len(im.shape):
     #     A = A[np.newaxis, :]
     A = _expand_dims_as(A, im, left=True)
     return 1 - omega * get_dark_channel(im / A, **kwarg)
-
 
 def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, win_size:int=1):
     """
@@ -119,7 +129,6 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
     sumA = np.array(np.sum(A, axis=1)).squeeze()
 
     return sc.sparse.diags(sumA, 0, (img_size, img_size)) - A
-
 
 def guided_filter(I, p, ks:tuple[int, int]=(5,5), eps=1e-2):
     # TODO: rgb or gray
