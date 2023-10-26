@@ -181,4 +181,7 @@ def get_J(I, A, t, t0=0.1, clip=True):
 def get_depth(t, beta=0.388):
     return  - np.log(t) / beta
 
+## TODO:
+def fast_guide_filter():
+    pass
 
