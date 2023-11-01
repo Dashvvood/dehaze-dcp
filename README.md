@@ -12,3 +12,9 @@
 
 
 
+La liste des projets pour IMA201 est disponible ici :
+https://perso.telecom-paristech.fr/gousseau/IMA201/projets2023.html
+
+Les instructions (merci de les lire attentivement) sont ici :
+https://perso.telecom-paristech.fr/gousseau/IMA201/projets.html
+

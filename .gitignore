@@ -154,7 +154,8 @@ cython_debug/
 
 # 
 
-data/tinySOTS
-data/kaiming
+# data/tinySOTS
+# data/kaiming
+data/output
 output/
 demo.ipynb
