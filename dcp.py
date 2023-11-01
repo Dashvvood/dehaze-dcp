@@ -132,8 +132,8 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
 
 def guided_filter(I, p, ks:Tuple[int, int]=(5,5), eps=1e-2):
     # TODO: rgb or gray
-    if len(res.shape) == 3 and res.shape[-1] == 3:
-        res = _rgb2gray(res)
+    if len(I.shape) == 3 and I.shape[-1] == 3:
+        I = _rgb2gray(I)
 
     filter_mean = np.ones(ks)
     filter_mean /= np.sum(filter_mean)
