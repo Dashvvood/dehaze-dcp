@@ -132,6 +132,9 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
 
 def guided_filter(I, p, ks:tuple[int, int]=(5,5), eps=1e-2):
     # TODO: rgb or gray
+    if len(res.shape) == 3 and res.shape[-1] == 3:
+        res = _rgb2gray(res)
+
     filter_mean = np.ones(ks)
     filter_mean /= np.sum(filter_mean)
     
@@ -153,8 +156,7 @@ def guided_filter(I, p, ks:tuple[int, int]=(5,5), eps=1e-2):
     mean_b = sc.ndimage.convolve(b, filter_mean, mode="nearest")
 
     res = mean_a * I + mean_b
-    if len(res.shape) == 3 and res.shape[-1] == 3:
-        res = _rgb2gray(res)
+
     return res
 
 def soft_matting(
