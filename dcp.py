@@ -1,6 +1,6 @@
 import numpy as np
 import scipy as sc
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 import time
 
 def _rgb2gray(A):
@@ -18,7 +18,7 @@ def _expand_dims_as(A, B, left=False):
             A = A[..., np.newaxis]
     return A
 
-def get_dark_channel(img: np.ndarray, patch_size: tuple[int, int]=(15,15)) -> np.ndarray:
+def get_dark_channel(img: np.ndarray, patch_size: Tuple[int, int]=(15,15)) -> np.ndarray:
     if len(img.shape) == 3 and img.shape[-1] == 3:
         img_min = np.min(img, axis=-1)
     elif len(img.shape) == 2 or (len(img.shape) == 3 and img.shape[-1] == 1):
@@ -130,7 +130,7 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
 
     return sc.sparse.diags(sumA, 0, (img_size, img_size)) - A
 
-def guided_filter(I, p, ks:tuple[int, int]=(5,5), eps=1e-2):
+def guided_filter(I, p, ks:Tuple[int, int]=(5,5), eps=1e-2):
     # TODO: rgb or gray
     if len(res.shape) == 3 and res.shape[-1] == 3:
         res = _rgb2gray(res)
