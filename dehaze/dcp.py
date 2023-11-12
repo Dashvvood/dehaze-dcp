@@ -3,11 +3,19 @@ import scipy as sc
 from typing import List, Optional, Union, Tuple
 import time
 
+from collections import namedtuple
+
+DehazeOutput = namedtuple(
+    "DehazeOutput",
+    ["I", "dc", "mask", "A", "tilde_t", "t", "J", "D"]
+)
+# namedtuple._asdict()
+
 def _rgb2gray(A):
     r, g, b = A[..., 0], A[..., 1], A[..., 2]
     return 0.2989 * r + 0.5870 * g + 0.1140 * b
 
-def _expand_dims_as(A, B, left=False):
+def _expand_A_as_B(A, B, left=False):
     """
     make len(A.shape) = len(B.shape)
     """
@@ -77,7 +85,7 @@ def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
 def get_tilde_t(im, A, omega=0.95, **kwarg):
     # while len(A.shape) < len(im.shape):
     #     A = A[np.newaxis, :]
-    A = _expand_dims_as(A, im, left=True)
+    A = _expand_A_as_B(A, im, left=True)
     return 1 - omega * get_dark_channel(im / A, **kwarg)
 
 def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, win_size:int=1):
@@ -131,15 +139,14 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
     return sc.sparse.diags(sumA, 0, (img_size, img_size)) - A
 
 def guided_filter(I, p, ks:Tuple[int, int]=(5,5), eps=1e-2):
-    # TODO: rgb or gray
     if len(I.shape) == 3 and I.shape[-1] == 3:
         I = _rgb2gray(I)
 
     filter_mean = np.ones(ks)
     filter_mean /= np.sum(filter_mean)
     
-    p = _expand_dims_as(p, I)
-    filter_mean = _expand_dims_as(filter_mean, I)
+    p = _expand_A_as_B(p, I)
+    filter_mean = _expand_A_as_B(filter_mean, I)
 
     mean_I = sc.ndimage.convolve(I, filter_mean, mode="nearest")
     mean_p = sc.ndimage.convolve(p, filter_mean, mode="nearest")
@@ -172,9 +179,9 @@ def get_t(L, tilde_t, lam=1e-4, ):
     return t.reshape(tilde_t.shape)
 
 def get_J(I, A, t, t0=0.1, clip=True):
-    A = _expand_dims_as(A, I, left=True)
+    A = _expand_A_as_B(A, I, left=True)
     t = np.clip(t, a_min=t0, a_max=1)
-    t = _expand_dims_as(t, I)
+    t = _expand_A_as_B(t, I)
     res = (I - A) / t + A
     if clip:
         res = np.clip(res, a_min=0, a_max=1)
@@ -186,4 +193,30 @@ def get_depth(t, beta=0.388):
 ## TODO:
 def fast_guide_filter():
     pass
+
+
+def dehaze_image(
+    I: np.ndarray, 
+    method: Optional[str],
+    patch_size: Tuple[int, int] = (15,15), 
+    top_ratio=1e-3,
+    **kwargs,
+):
+    if method is not None and method not in ["soft", "guided"]:
+        raise NotImplementedError(f"method {method} not NotImplemented")
+    
+    dc = get_dark_channel(I, patch_size)
+    mask = get_mask(dc, top_ratio)
+    A = get_atmos_light(I, dc, top_ratio)
+    tilde_t = get_tilde_t(I, A)
+
+    if method is None or method == "soft":
+        t = soft_matting(I, p=tilde_t, **kwargs)
+    else:
+        t = guided_filter(I, p=tilde_t,  **kwargs)
+
+    J = get_J(I, A, t)
+    D = get_depth(t)
+
+    return DehazeOutput(I, dc, mask, A, tilde_t, t, J, D)
 

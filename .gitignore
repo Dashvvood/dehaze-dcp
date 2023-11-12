@@ -159,3 +159,5 @@ cython_debug/
 data/output
 output/
 demo.ipynb
+notebook/
+doc/*.pdf

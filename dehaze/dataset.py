@@ -4,7 +4,7 @@ from collections import OrderedDict, namedtuple
 import re
 import numpy as np
 
-SOTS_DATA = namedtuple('data', ['gt', 'hazy'])
+SOTS_DATA = namedtuple('SOTS_DATA', ['gt', 'hazy'])
 
 class TinySOTS(object):
     def __init__(self, root:str) -> None:
