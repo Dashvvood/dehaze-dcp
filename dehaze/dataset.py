@@ -4,7 +4,7 @@ from collections import OrderedDict, namedtuple
 import re
 import numpy as np
 
-SOTS_DATA = namedtuple('SOTS_DATA', ['gt', 'hazy'])
+SOTS_DATA = namedtuple('SOTS_DATA', ['gt', 'hazy', 'path'])
 
 class TinySOTS(object):
     def __init__(self, root:str) -> None:
@@ -57,4 +57,15 @@ class TinySOTS(object):
         if hazy.dtype == np.uint8:
             hazy = hazy / 255
 
-        return SOTS_DATA(gt, hazy)
+        return SOTS_DATA(gt, hazy, self.gt[k])
+
+    def get_by_prefix(self, prefix):
+        k = prefix
+        gt = plt.imread(self.gt[k])
+        if gt.dtype == np.uint8:
+            gt = gt / 255
+        hazy = plt.imread(self.hazy[k])
+        if hazy.dtype == np.uint8:
+            hazy = hazy / 255
+
+        return SOTS_DATA(gt, hazy, self.gt[k])

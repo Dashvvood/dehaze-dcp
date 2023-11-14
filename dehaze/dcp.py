@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sc
 from typing import List, Optional, Union, Tuple
 import time
-
+from skimage.transform import resize
 from collections import namedtuple
 
 DehazeOutput = namedtuple(
@@ -55,10 +55,10 @@ def get_mask(dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
     
     dc_flatten = dc.flatten()
     indices = np.argsort(dc_flatten)[-numpix:]
-    mask = np.full_like(dc_flatten, False)
+    mask = np.full(dc_flatten.shape, False, dtype=bool)
     mask[indices] = True
-
-    return mask
+    
+    return np.reshape(mask, dc.shape)
 
 
 def get_atmos_light(im, dc, top_ratio:float=1e-3) -> Union[float, np.ndarray]:
@@ -138,7 +138,34 @@ def get_laplace_matting_matrix(I:np.ndarray, consts:np.ndarray=None, eps=1e-7, w
 
     return sc.sparse.diags(sumA, 0, (img_size, img_size)) - A
 
-def guided_filter(I, p, ks:Tuple[int, int]=(5,5), eps=1e-2):
+
+
+def soft_matting(
+    I:np.ndarray, p, lam=1e-4, **kwargs
+):
+    L = get_laplace_matting_matrix(I=I, **kwargs)
+    # t = sc.sparse.linalg.spsolve(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * p.flatten())
+    t, info = sc.sparse.linalg.cg(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * p.flatten())
+    return t.reshape(p.shape)
+
+def get_t(L, tilde_t, lam=1e-4, ):
+    t = sc.sparse.linalg.spsolve(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * tilde_t.flatten())
+    return t.reshape(tilde_t.shape)
+
+def get_J(I, A, t, t0=0.1, clip=True):
+    A = _expand_A_as_B(A, I, left=True)
+    t = np.clip(t, a_min=t0, a_max=1)
+    t = _expand_A_as_B(t, I)
+    res = (I - A) / t + A
+    if clip:
+        res = np.clip(res, a_min=0, a_max=1)
+    return res
+
+def get_depth(t, beta=0.388):
+    return  - np.log(t) / beta
+
+
+def guided_filter(I, p, ks:Tuple[int, int]=(41,41), eps=1e-3):
     if len(I.shape) == 3 and I.shape[-1] == 3:
         I = _rgb2gray(I)
 
@@ -166,33 +193,49 @@ def guided_filter(I, p, ks:Tuple[int, int]=(5,5), eps=1e-2):
 
     return res
 
-def soft_matting(
-    I:np.ndarray, p, lam=1e-4, **kwargs
-):
-    L = get_laplace_matting_matrix(I=I, **kwargs)
-    # t = sc.sparse.linalg.spsolve(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * p.flatten())
-    t, info = sc.sparse.linalg.cg(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * p.flatten())
-    return t.reshape(p.shape)
 
-def get_t(L, tilde_t, lam=1e-4, ):
-    t = sc.sparse.linalg.spsolve(L + lam * sc.sparse.diags([1] * L.shape[0], 0), lam * tilde_t.flatten())
-    return t.reshape(tilde_t.shape)
+def fast_guided_filter(I, p, ks:Tuple[int, int]=(41,41), eps=1e-3, s=4):
+    if len(I.shape) == 3 and I.shape[-1] == 3:
+        I = _rgb2gray(I)
+    
+    h, w = I.shape
+    I0 = I.copy()
 
-def get_J(I, A, t, t0=0.1, clip=True):
-    A = _expand_A_as_B(A, I, left=True)
-    t = np.clip(t, a_min=t0, a_max=1)
-    t = _expand_A_as_B(t, I)
-    res = (I - A) / t + A
-    if clip:
-        res = np.clip(res, a_min=0, a_max=1)
+    I = resize(I, (h // s, w // s)) 
+    p = _expand_A_as_B(p, I) # not useful
+    p = resize(p, (h // s, w // s))
+
+    # according to r, instead of the 2r + 1
+    r0 = (ks[0] - 1) // 2
+    r1 = (ks[1] - 1) // 2
+
+    ks = (2 * r0 // s + 1, 2 * r1 // s + 1)
+
+    filter_mean = np.ones(ks)
+    filter_mean /= np.sum(filter_mean)
+    
+    
+    filter_mean = _expand_A_as_B(filter_mean, I)
+
+    mean_I = sc.ndimage.convolve(I, filter_mean, mode="nearest")
+    mean_p = sc.ndimage.convolve(p, filter_mean, mode="nearest")
+    corr_Ip = sc.ndimage.convolve(I * p , filter_mean, mode="nearest")
+    corr_I = sc.ndimage.convolve(I * I , filter_mean, mode="nearest")
+
+    var_I = corr_I - mean_I * mean_I
+    cov_Ip = corr_Ip - mean_I * mean_p
+
+    a = cov_Ip / (var_I + eps)
+    b = mean_p - a * mean_I
+
+    mean_a = sc.ndimage.convolve(a, filter_mean, mode="nearest")
+    mean_b = sc.ndimage.convolve(b, filter_mean, mode="nearest")
+
+    mean_a = resize(mean_a, (h, w))
+    mean_b = resize(mean_b, (h, w))
+
+    res = mean_a * I0 + mean_b
     return res
-
-def get_depth(t, beta=0.388):
-    return  - np.log(t) / beta
-
-## TODO:
-def fast_guide_filter():
-    pass
 
 
 def dehaze_image(
@@ -202,7 +245,7 @@ def dehaze_image(
     top_ratio=1e-3,
     **kwargs,
 ):
-    if method is not None and method not in ["soft", "guided"]:
+    if method is not None and method not in ["soft", "guided", "fast"]:
         raise NotImplementedError(f"method {method} not NotImplemented")
     
     dc = get_dark_channel(I, patch_size)
@@ -212,9 +255,13 @@ def dehaze_image(
 
     if method is None or method == "soft":
         t = soft_matting(I, p=tilde_t, **kwargs)
-    else:
+    elif method == "guided":
         t = guided_filter(I, p=tilde_t,  **kwargs)
-
+    elif method == "fast":
+        t = fast_guided_filter(I, p=tilde_t,  **kwargs)
+    else:
+        raise NotImplementedError
+    
     J = get_J(I, A, t)
     D = get_depth(t)
 
